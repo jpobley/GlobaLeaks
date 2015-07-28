@@ -74,6 +74,7 @@
             <span ng-click="sortKey = 'context'; sortReverse = !sortReverse">
               <span data-translate>Context</span>
               <i class="glyphicon glyphicon-inbox"></i>
+              <span>{{'Context' | translate}}</span>
               <span class="btn btn-xs" ng-show="sortKey == 'context'">
                 <span ng-show="!sortReverse" class="glyphicon glyphicon-triangle-bottom"></span>
                 <span ng-show="sortReverse" class="glyphicon glyphicon-triangle-top"></span>
@@ -120,6 +121,8 @@
               </span>
             </span>
           </th>
+          <th>Stato</th>
+          <th>Generalità</th>
           <th>
             <span ng-click="sortKey = 'files'; sortReverse = !sortReverse">
               <i class="glyphicon glyphicon-file"></i>
@@ -180,6 +183,8 @@
           <td>{{::tip.creation_date | date:'dd-MM-yyyy HH:mm'}}</td>
           <td>{{::tip.update_date | date:'dd-MM-yyyy HH:mm'}}</td>
           <td>{{::tip.expiration_date | date:'dd-MM-yyyy HH:mm'}}</td>
+          <td><span>{{$index%3?'Presa in carico':'Archiviata'}}</span></td>
+          <td><span>{{$index%2?'Fornite':'Non fornite'}}</span></td>
           <td>{{::tip.file_counter}}</td>
           <td>{{::tip.comment_counter}}</td>
           <td>{{::tip.message_counter}}</td>
