@@ -3,10 +3,11 @@
 #   *********
 #
 # Base class for implement the scheduled tasks
+import exceptions
 import sys
 import time
 
-from twisted.internet import task, defer
+from twisted.internet import task, defer, reactor
 from twisted.python.failure import Failure
 
 from globaleaks.handlers.base import TimingStatsHandler
@@ -15,35 +16,42 @@ from globaleaks.utils.mailutils import mail_exception_handler, send_exception_em
 from globaleaks.utils.utility import log
 
 
+test_reactor = None
+
+
 DEFAULT_JOB_MONITOR_TIME = 5 * 60 # seconds
 
 
 class JobMonitor(task.LoopingCall):
-    run = 0
-
     def __init__(self, job, monitor_time=DEFAULT_JOB_MONITOR_TIME):
+        self.run = 0
         self.job = job
         self.monitor_time = monitor_time
 
         task.LoopingCall.__init__(self, self.tooMuch)
 
-        if not GLSettings.testing:
-            self.start(self.monitor_time, False)
+        self.clock = reactor if test_reactor is None else test_reactor
+
+        self.start(self.monitor_time, False)
 
     def tooMuch(self):
         self.run += 1
 
         self.elapsed_time = self.monitor_time * self.run
 
-        if (self.elapsed_time > 3600):
-            hours = int(self.elapsed_time / 3600)
-            error = "Warning: [%s] is taking more than %d hours to execute; killing it." % (self.job.name, hours)
-            self.job.stop()
-        if (self.elapsed_time > 60):
+        if (self.elapsed_time < 60):
+            error = "Warning: [%s] is taking more than %d seconds to execute" % (self.job.name, self.elapsed_time)
+        elif (self.elapsed_time < 3600):
             minutes = int(self.elapsed_time / 60)
             error = "Warning: [%s] is taking more than %d minutes to execute" % (self.job.name, minutes)
         else:
-            error = "Warning: [%s] is taking more than %d seconds to execute" % (self.job.name, self.elapsed_time)
+            hours = int(self.elapsed_time / 3600)
+            error = "Warning: [%s] is taking more than %d hours to execute; killing it." % (self.job.name, hours)
+
+            try:
+                self.job.stop()
+            except Exception as e:
+                pass
 
         log.err(error)
         send_exception_email(error, mail_reason="Job Time Exceeded")
@@ -62,6 +70,7 @@ class GLJob(task.LoopingCall):
 
     def __init__(self):
         task.LoopingCall.__init__(self, self._operation)
+        self.clock = reactor if test_reactor is None else test_reactor
 
     def stats_collection_start(self):
         self.monitor = JobMonitor(self, self.monitor_time)
@@ -76,8 +85,12 @@ class GLJob(task.LoopingCall):
 
     def stats_collection_end(self):
         if self.monitor is not None:
-            self.monitor.stop()
-            self.monitor = None
+            try:
+                self.monitor.stop()
+            except:
+                pass
+            finally:
+                self.monitor = None
 
         current_run_time = time.time() - self.start_time
 

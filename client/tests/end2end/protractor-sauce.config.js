@@ -12,6 +12,8 @@ exports.config = {
 
   baseUrl: 'http://localhost:9000/',
 
+  directConnect: false,
+
   specs: [
     'test-init.js',
     'test-admin-perform-wizard.js',
@@ -27,6 +29,6 @@ exports.config = {
     isVerbose: true,
     includeStackTrace: true,
     showColors: true,
-    defaultTimeoutInterval : 60000
+    defaultTimeoutInterval : 180000
   }
 };

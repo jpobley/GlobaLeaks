@@ -107,7 +107,10 @@ module.exports = function(grunt) {
     ngtemplates:  {
       GLClient: {
         cwd: 'app',
-        options: {base: 'app/'},
+        options: {
+          base: 'app/',
+          quotes: 'single'
+        },
         src: ['views/**/*.html'],
         dest: 'tmp/js/templates.js'
       }
@@ -221,8 +224,6 @@ module.exports = function(grunt) {
   grunt.loadNpmTasks('grunt-protractor-runner');
   grunt.loadNpmTasks('grunt-string-replace');
   grunt.loadNpmTasks('grunt-usemin');
-  grunt.loadNpmTasks('grunt-contrib-copy');
-  grunt.loadNpmTasks('grunt-contrib-connect');
 
   var readDynamicStrings = function() {
     var filecontent = grunt.file.read('app/data_src/dynamic_strings.json'),
@@ -237,11 +238,16 @@ module.exports = function(grunt) {
     return ret;
   }
 
+  var readNoTranslateStrings = function() {
+    return JSON.parse(grunt.file.read('app/data_src/notranslate_strings.json'));
+  }
+
   var path = require('path'),
     superagent = require('superagent'),
     fs = require('fs'),
     Gettext = require("node-gettext"),
-    dynamic_strings = readDynamicStrings();
+    dynamic_strings = readDynamicStrings(),
+    notranslate_strings = readNoTranslateStrings()
 
   grunt.registerTask('copyBowerSources', function() {
     var files = [
@@ -507,6 +513,9 @@ module.exports = function(grunt) {
     gt.addTextdomain("en");
 
     function addString(str) {
+      if (notranslate_strings.indexOf(str) !== -1)
+        return;
+
       if (str in dynamic_strings['mapping']) {
         str = dynamic_strings['mapping'][str];
         gt.setTranslation("en", "", str, str);

@@ -27,35 +27,36 @@ angular.module('GLServices', ['ngResource']).
           $rootScope.loginInProgress = true;
 
           var success_fn = function(response) {
-            self.id = response.session_id;
-            self.user_id = response.user_id;
-            self.username = username;
-            self.role = response.role;
-            self.session = response.session;
-            self.state = response.state;
-            self.password_change_needed = response.password_change_needed;
-
-            self.homepage = '';
-            self.auth_landing_page = '';
-
-            if (self.role === 'admin') {
-              self.homepage = '#/admin/landing';
-              self.preferencespage = '#/user/preferences';
-              self.auth_landing_page = '/admin/landing';
-              $rootScope.preferences = UserPreferences.get();
-            } else if (self.role === 'custodian') {
-              self.homepage = '#/custodian/identityaccessrequests';
-              self.preferencespage = '#/user/preferences';
-              self.auth_landing_page = '/custodian/identityaccessrequests';
-              $rootScope.preferences = UserPreferences.get();
-            } else if (self.role === 'receiver') {
-              self.homepage = '#/receiver/tips';
-              self.preferencespage = '#/receiver/preferences';
-              self.auth_landing_page = '/receiver/tips';
-              $rootScope.preferences = ReceiverPreferences.get();
-            } else if (self.role === 'whistleblower') {
-              self.auth_landing_page = '/status';
+            self.session = {
+              'id': response.session_id,
+              'user_id': response.user_id,
+              'username': username,
+              'role': response.role,
+              'state': response.state,
+              'password_change_needed': response.password_change_needed,
+              'homepage': '',
+              'auth_landing_page': ''
             }
+
+            if (self.session.role === 'admin') {
+              self.session.homepage = '#/admin/landing';
+              self.session.auth_landing_page = '/admin/landing';
+              self.session.preferencespage = '#/user/preferences';
+              $rootScope.preferences = UserPreferences.get();
+            } else if (self.session.role === 'custodian') {
+              self.session.homepage = '#/custodian/identityaccessrequests';
+              self.session.auth_landing_page = '/custodian/identityaccessrequests';
+              self.session.preferencespage = '#/user/preferences';
+              $rootScope.preferences = UserPreferences.get();
+            } else if (self.session.role === 'receiver') {
+              self.session.homepage = '#/receiver/tips';
+              self.session.auth_landing_page = '/receiver/tips';
+              self.session.preferencespage = '#/receiver/preferences';
+              $rootScope.preferences = ReceiverPreferences.get();
+            } else if (self.session.role === 'whistleblower') {
+              self.session.auth_landing_page = '/status';
+            }
+
             // reset login state before returning
             $rootScope.loginInProgress = false;
 
@@ -67,10 +68,10 @@ angular.module('GLServices', ['ngResource']).
               $location.path($routeParams.src);
             } else {
               // Override the auth_landing_page if a password change is needed
-              if (self.password_change_needed) {
+              if (self.session.password_change_needed) {
                 $location.path('/forcedpasswordchange');
               } else {
-                $location.path(self.auth_landing_page);
+                $location.path(self.session.auth_landing_page);
               }
             }
 
@@ -92,25 +93,9 @@ angular.module('GLServices', ['ngResource']).
           }
         };
 
-        self.clean = function() {
-          self.id = null;
-          self.user_id = null;
-          self.username = null;
-          self.role = null;
-          self.session = null;
-          self.homepage = null;
-          self.auth_landing_page = null;
-        };
-
         self.getLoginUri = function (role, path) {
           var loginUri = "/login";
-          if (role === 'whistleblower') {
-            loginUri = ('/');
-          } else if (role === 'admin') {
-            loginUri = '/admin';
-          } else if (role === 'custodian') {
-            loginUri = '/custodian';
-          } else if (!role) {
+          if (role === undefined ) {
             if (path === '/status') {
               // If we are whistleblowers on the status page, redirect to homepage
               loginUri = '/';
@@ -121,6 +106,12 @@ angular.module('GLServices', ['ngResource']).
               // If we are custodians on the /custodian(/*) pages, redirect to /custodian
               loginUri = '/custodian';
             }
+          } else if (role === 'whistleblower') {
+            loginUri = ('/');
+          } else if (role === 'admin') {
+            loginUri = '/admin';
+          } else if (role === 'custodian') {
+            loginUri = '/custodian';
           }
 
           return loginUri;
@@ -132,21 +123,22 @@ angular.module('GLServices', ['ngResource']).
           // we use $http['delete'] in place of $http.delete due to
           // the magical IE7/IE8 that do not allow delete as identifier
           // https://github.com/globaleaks/GlobaLeaks/issues/943
-          if (self.role === 'whistleblower') {
-            $http['delete']('receiptauth').then($rootScope.logout_performed,
-                                                $rootScope.logout_performed);
+          if (self.session.role === 'whistleblower') {
+            $http['delete']('receiptauth').then($rootScope.logoutPerformed,
+                                                $rootScope.logoutPerformed);
           } else {
-            $http['delete']('authentication').then($rootScope.logout_performed,
-                                                   $rootScope.logout_performed);
+            $http['delete']('authentication').then($rootScope.logoutPerformed,
+                                                   $rootScope.logoutPerformed);
           }
         };
 
-        $rootScope.logout_performed = function(sessionExpired) {
-          var role = self.role;
+        $rootScope.loginRedirect = function(sessionExpired) {
+          var role = self.session === undefined ? undefined : self.session.role;
 
-          self.clean();
+          self.session = undefined;
 
           var source_path = $location.path();
+
           var redirect_path = self.getLoginUri(role, source_path);
 
           // Only redirect if we are not already on the login page
@@ -158,11 +150,15 @@ angular.module('GLServices', ['ngResource']).
           }
         };
 
+        $rootScope.logoutPerformed = function() {
+          $rootScope.loginRedirect(true);
+        }
+
         self.get_auth_headers = function() {
           var h = {};
 
-          if (self.id) {
-            h['X-Session'] = self.id;
+          if (self.session) {
+            h['X-Session'] = self.session.id;
           }
 
           if ($rootScope.language) {
@@ -180,29 +176,30 @@ angular.module('GLServices', ['ngResource']).
   function($q, $injector, $rootScope, $location) {
     var $http = null;
 
-    $rootScope.showRequestBox = false;
-
     /* This interceptor is responsible for keeping track of the HTTP requests
      * that are sent and their result (error or not error) */
     return {
+      request: function(config) {
+        // A new request should display the loader overlay
+        $rootScope.showRequestBox = true;
+        return config;
+      },
 
       response: function(response) {
-
         $http = $http || $injector.get('$http');
 
         $rootScope.pendingRequests = function () {
           return $http.pendingRequests.length;
-        };
+        }
 
-        $rootScope.showRequestBox = true;
-
-
+        // the last response should hide the loader overlay
         if ($http.pendingRequests.length < 1) {
           $rootScope.showRequestBox = false;
         }
 
         return response;
       },
+
       responseError: function(response) {
         /*
            When the response has failed write the rootScope
@@ -210,46 +207,44 @@ angular.module('GLServices', ['ngResource']).
         */
         $http = $http || $injector.get('$http');
 
+        if (response.data !== null) {
+          var error = {
+            'url': response.config.url,
+            'message': response.data.error_message,
+            'code': response.data.error_code,
+            'arguments': response.data.arguments
+          };
+
+          /* 30: Not Authenticated / 24: Wrong Authentication */
+          if (error.code === 30 || error.code === 24) {
+            $rootScope.loginRedirect(error.code === 30);
+          }
+
+          $rootScope.errors.push(error);
+        }
+
         if ($http.pendingRequests.length < 1) {
           $rootScope.showRequestBox = false;
         }
-
-        if (response.data === null) {
-            return $q.reject(response);
-        }
-
-        var error = {
-          'url': response.config.url,
-          'message': response.data.error_message,
-          'code': response.data.error_code,
-          'arguments': response.data.arguments
-        };
-
-        /* 30: Not Authenticated / 24: Wrong Authentication */
-        if (error.code === 30 || error.code === 24) {
-          $rootScope.logout_performed(error.code === 30);
-        }
-
-        $rootScope.errors.push(error);
 
         return $q.reject(response);
       }
     };
 }]).
   factory('Node', ['GLResource', function(GLResource) {
-    return GLResource('node');
+    return new GLResource('node');
 }]).
   factory('Contexts', ['GLResource', function(GLResource) {
-    return GLResource('contexts');
+    return new GLResource('contexts');
 }]).
   factory('Receivers', ['GLResource', function(GLResource) {
-    return GLResource('receivers');
+    return new GLResource('receivers');
 }]).
   factory('TokenResource', ['GLResource', function(GLResource) {
-    return GLResource('token/:id', {id: '@id'});
+    return new GLResource('token/:id', {id: '@id'});
 }]).
   factory('SubmissionResource', ['GLResource', function(GLResource) {
-    return GLResource('submission/:id', {id: '@token_id'});
+    return new GLResource('submission/:id', {id: '@token_id'});
 }]).
   // In here we have all the functions that have to do with performing
   // submission requests to the backend
@@ -327,7 +322,7 @@ angular.module('GLServices', ['ngResource']).
         // one receiver to automtically selected nor the user is coming from a link with
         // explicit receivers selection.
         // in all this conditions we select all receivers for which submission is allowed.
-        if (!self.context.show_receivers) {
+        if (!self.context.allow_recipients_selection) {
           if (self.count_selected_receivers() === 0 && !self.context.select_all_receivers) {
             angular.forEach($rootScope.receivers, function(receiver) {
               if (self.context.receivers.indexOf(receiver.id) !== -1) {
@@ -406,19 +401,19 @@ angular.module('GLServices', ['ngResource']).
     };
 }]).
   factory('RTipResource', ['GLResource', function(GLResource) {
-    return GLResource('rtip/:id', {id: '@id'});
+    return new GLResource('rtip/:id', {id: '@id'});
 }]).
   factory('RTipReceiverResource', ['GLResource', function(GLResource) {
-    return GLResource('rtip/:id/receivers', {id: '@id'});
+    return new GLResource('rtip/:id/receivers', {id: '@id'});
 }]).
   factory('RTipCommentResource', ['GLResource', function(GLResource) {
-    return GLResource('rtip/:id/comments', {id: '@id'});
+    return new GLResource('rtip/:id/comments', {id: '@id'});
 }]).
   factory('RTipMessageResource', ['GLResource', function(GLResource) {
-    return GLResource('rtip/:id/messages', {id: '@id'});
+    return new GLResource('rtip/:id/messages', {id: '@id'});
 }]).
   factory('RTipIdentityAccessRequestResource', ['GLResource', function(GLResource) {
-    return GLResource('rtip/:id/identityaccessrequests', {id: '@id'});
+    return new GLResource('rtip/:id/identityaccessrequests', {id: '@id'});
 }]).
   factory('RTip', ['$http', '$q', '$filter', 'RTipResource', 'RTipReceiverResource', 'RTipMessageResource', 'RTipCommentResource', 'RTipIdentityAccessRequestResource',
           function($http, $q, $filter, RTipResource, RTipReceiverResource, RTipMessageResource, RTipCommentResource, RTipIdentityAccessRequestResource) {
@@ -478,16 +473,16 @@ angular.module('GLServices', ['ngResource']).
     };
 }]).
   factory('WBTipResource', ['GLResource', function(GLResource) {
-    return GLResource('wbtip');
+    return new GLResource('wbtip');
 }]).
   factory('WBTipReceiverResource', ['GLResource', function(GLResource) {
-    return GLResource('wbtip/receivers');
+    return new GLResource('wbtip/receivers');
 }]).
   factory('WBTipCommentResource', ['GLResource', function(GLResource) {
-    return GLResource('wbtip/comments');
+    return new GLResource('wbtip/comments');
 }]).
   factory('WBTipMessageResource', ['GLResource', function(GLResource) {
-    return GLResource('wbtip/messages/:id', {id: '@id'});
+    return new GLResource('wbtip/messages/:id', {id: '@id'});
 }]).
   factory('WBTip', ['$q', '$rootScope', 'WBTipResource', 'WBTipReceiverResource', 'WBTipCommentResource', 'WBTipMessageResource',
       function($q, $rootScope, WBTipResource, WBTipReceiverResource, WBTipCommentResource, WBTipMessageResource) {
@@ -553,43 +548,43 @@ angular.module('GLServices', ['ngResource']).
     };
 }]).
   factory('ReceiverPreferences', ['GLResource', function(GLResource) {
-    return GLResource('receiver/preferences');
+    return new GLResource('receiver/preferences');
 }]).
   factory('ReceiverTips', ['GLResource', function(GLResource) {
-    return GLResource('receiver/tips');
+    return new GLResource('receiver/tips');
 }]).
   factory('IdentityAccessRequests', ['GLResource', function(GLResource) {
-    return GLResource('custodian/identityaccessrequests');
+    return new GLResource('custodian/identityaccessrequests');
 }]).
   factory('ReceiverOverview', ['GLResource', function(GLResource) {
-    return GLResource('admin/overview/users');
+    return new GLResource('admin/overview/users');
 }]).
   factory('AdminContextResource', ['GLResource', function(GLResource) {
-    return GLResource('admin/contexts/:id', {id: '@id'});
+    return new GLResource('admin/contexts/:id', {id: '@id'});
 }]).
   factory('AdminStepResource', ['GLResource', function(GLResource) {
-    return GLResource('admin/steps/:id', {id: '@id'});
+    return new GLResource('admin/steps/:id', {id: '@id'});
 }]).
   factory('AdminFieldResource', ['GLResource', function(GLResource) {
-    return GLResource('admin/fields/:id',{id: '@id'});
+    return new GLResource('admin/fields/:id',{id: '@id'});
 }]).
   factory('AdminFieldTemplateResource', ['GLResource', function(GLResource) {
-    return GLResource('admin/fieldtemplates/:id', {id: '@id'});
+    return new GLResource('admin/fieldtemplates/:id', {id: '@id'});
 }]).
   factory('AdminShorturlResource', ['GLResource', function(GLResource) {
-    return GLResource('admin/shorturls/:id', {id: '@id'});
+    return new GLResource('admin/shorturls/:id', {id: '@id'});
 }]).
   factory('AdminUserResource', ['GLResource', function(GLResource) {
-    return GLResource('admin/users/:id', {id: '@id'});
+    return new GLResource('admin/users/:id', {id: '@id'});
 }]).
   factory('AdminReceiverResource', ['GLResource', function(GLResource) {
-    return GLResource('admin/receivers/:id', {id: '@id'});
+    return new GLResource('admin/receivers/:id', {id: '@id'});
 }]).
   factory('AdminNodeResource', ['GLResource', function(GLResource) {
-    return GLResource('admin/node');
+    return new GLResource('admin/node');
 }]).
   factory('AdminNotificationResource', ['GLResource', function(GLResource) {
-    return GLResource('admin/notification');
+    return new GLResource('admin/notification');
 }]).
   factory('Admin', ['GLResource', '$q', 'AdminContextResource', 'AdminStepResource', 'AdminFieldResource', 'AdminFieldTemplateResource', 'AdminUserResource', 'AdminReceiverResource', 'AdminNodeResource', 'AdminNotificationResource', 'AdminShorturlResource',
     function(GLResource, $q, AdminContextResource, AdminStepResource, AdminFieldResource, AdminFieldTemplateResource, AdminUserResource, AdminReceiverResource, AdminNodeResource, AdminNotificationResource, AdminShorturlResource) {
@@ -619,7 +614,8 @@ angular.module('GLServices', ['ngResource']).
           context.presentation_order = 0;
           context.tip_timetolive = 15;
           context.show_context = true;
-          context.show_receivers = false;
+          context.show_recipients_details = false;
+          context.allow_recipients_selection = false;
           context.show_receivers_in_alphabetical_order = true;
           context.select_all_receivers = false;
           context.maximum_selectable_receivers = 0;
@@ -807,31 +803,31 @@ angular.module('GLServices', ['ngResource']).
     };
 }]).
   factory('UserPreferences', ['GLResource', function(GLResource) {
-    return GLResource('preferences', {}, {'update': {method: 'PUT'}});
+    return new GLResource('preferences', {}, {'update': {method: 'PUT'}});
 }]).
   factory('TipOverview', ['GLResource', function(GLResource) {
-    return GLResource('admin/overview/tips');
+    return new GLResource('admin/overview/tips');
 }]).
   factory('FileOverview', ['GLResource', function(GLResource) {
-    return GLResource('admin/overview/files');
+    return new GLResource('admin/overview/files');
 }]).
   factory('StatsCollection', ['GLResource', function(GLResource) {
-    return GLResource('admin/stats/:week_delta', {week_delta: '@week_delta'}, {});
+    return new GLResource('admin/stats/:week_delta', {week_delta: '@week_delta'}, {});
 }]).
   factory('AnomaliesCollection', ['GLResource', function(GLResource) {
-    return GLResource('admin/anomalies');
+    return new GLResource('admin/anomalies');
 }]).
   factory('AnomaliesHistCollection', ['GLResource', function(GLResource) {
-    return GLResource('admin/history');
+    return new GLResource('admin/history');
 }]).
   factory('ActivitiesCollection', ['GLResource', function(GLResource) {
-    return GLResource('admin/activities/details');
+    return new GLResource('admin/activities/details');
 }]).
   factory('StaticFiles', ['GLResource', function(GLResource) {
-    return GLResource('admin/staticfiles');
+    return new GLResource('admin/staticfiles');
 }]).
   factory('DefaultAppdata', ['GLResource', function(GLResource) {
-    return GLResource('data/appdata_l10n.json', {});
+    return new GLResource('data/appdata_l10n.json', {});
 }]).
   factory('passwordWatcher', ['$parse', function($parse) {
     return function(scope, password) {
@@ -872,7 +868,7 @@ angular.module('GLServices', ['ngResource']).
           validatePasswordChange();
       }, true);
 
-    }
+    };
 }]).
   factory('changePasswordWatcher', ['$parse', function($parse) {
     return function(scope, old_password, password, check_password) {
@@ -946,6 +942,36 @@ angular.module('GLServices', ['ngResource']).
       }, true);
 
     };
+}]).
+  factory('fieldsUtilities', ['$filter', function($filter) {
+      var minY = function(arr) {
+        return $filter('min')($filter('map')(arr, 'y'));
+      };
+
+      var splitRows = function(fields) {
+        var rows = $filter('groupBy')(fields, 'y');
+        rows = $filter('toArray')(rows);
+        rows = $filter('orderBy')(rows, minY);
+        return rows;
+      };
+
+      var prepare_field_answers_structure = function(field) {
+        if (field.answers_structure === undefined) {
+          field.answer_structure = {};
+          if (field.type === 'fieldgroup') {
+            angular.forEach(field.children, function(child) {
+              field.answer_structure[child.id] = [prepare_field_answers_structure(child)];
+            });
+          }
+        }
+        return field.answer_structure;
+      };
+
+      return {
+        minY: minY,
+        splitRows: splitRows,
+        prepare_field_answers_structure: prepare_field_answers_structure
+      };
 }]).
   constant('CONSTANTS', {
      /* The email regexp restricts email addresses to less than 400 chars. See #1215 */

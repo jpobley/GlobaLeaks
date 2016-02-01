@@ -28,7 +28,6 @@ CREATE TABLE user (
 
 CREATE TABLE message (
     id TEXT NOT NULL,
-    visualized INTEGER NOT NULL,
     creation_date TEXT NOT NULL,
     author TEXT NOT NULL,
     receivertip_id TEXT NOT NULL,
@@ -61,7 +60,8 @@ CREATE TABLE context (
     maximum_selectable_receivers INTEGER,
     show_small_cards INTEGER NOT NULL,
     show_context INTEGER NOT NULL,
-    show_receivers INTEGER NOT NULL,
+    show_recipients_details INTEGER NOT NULL,
+    allow_recipients_selection INTEGER NOT NULL,
     enable_comments INTEGER NOT NULL,
     enable_messages INTEGER NOT NULL,
     enable_two_way_comments INTEGER NOT NULL,
@@ -188,6 +188,7 @@ CREATE TABLE node (
     disable_donation_panel INTEGER NOT NULL,
     enable_captcha INTEGER NOT NULL,
     enable_proof_of_work INTEGER NOT NULL,
+    enable_experimental_features INTEGER NOT NULL,
     simplified_login INTEGER NOT NULL,
     enable_custom_privacy_badge INTEGER NOT NULL,
     custom_privacy_badge_tor BLOB NOT NULL,
@@ -249,9 +250,11 @@ CREATE TABLE notification (
     identity_access_request_mail_title BLOB,
     identity_provided_mail_template BLOB,
     identity_provided_mail_title BLOB,
+    export_template BLOB,
+    export_message_whistleblower BLOB,
+    export_message_recipient BLOB,
     receiver_notification_limit_reached_mail_template BLOB,
     receiver_notification_limit_reached_mail_title BLOB,
-    archive_description BLOB,
     tip_expiration_threshold INTEGER NOT NULL,
     notification_threshold_per_hour INTEGER NOT NULL,
     notification_suspension_time INTEGER NOT NULL,
@@ -295,15 +298,6 @@ CREATE TABLE receiver (
     FOREIGN KEY (id) REFERENCES user(id) ON DELETE CASCADE,
     PRIMARY KEY (id)
 );
-
-CREATE TABLE custodian_context (
-    context_id TEXT NOT NULL,
-    custodian_id TEXT NOT NULL,
-    FOREIGN KEY (context_id) REFERENCES context(id) ON DELETE CASCADE,
-    FOREIGN KEY (custodian_id) REFERENCES custodian(id) ON DELETE CASCADE,
-    PRIMARY KEY (context_id, custodian_id)
-);
-
 
 CREATE TABLE receiver_context (
     context_id TEXT NOT NULL,

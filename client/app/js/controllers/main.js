@@ -1,16 +1,17 @@
 GLClient.controller('MainCtrl', ['$q', '$scope', '$rootScope', '$http', '$route', '$routeParams', '$location',  '$filter', '$translate', '$uibModal', '$timeout', 'Authentication', 'Node', 'Contexts', 'Receivers', 'WhistleblowerTip', 'GLCache',
   function($q, $scope, $rootScope, $http, $route, $routeParams, $location, $filter, $translate, $uibModal, $timeout, Authentication, Node, Contexts, Receivers, WhistleblowerTip, GLCache) {
     $rootScope.started = false;
+    $rootScope.showLoadingPanel = false;
     $rootScope.successes = [];
     $rootScope.errors = [];
 
     $scope.rtl = false;
-    $scope.app_logo = 'static/globaleaks_logo.png';
+    $scope.app_logo = 'static/logo.png';
     $scope.app_stylesheet = 'css/styles.css';
 
     $rootScope.language = $location.search().lang;
 
-    $rootScope.embedded = $location.search().embedded == 'true' ? true : false;
+    $rootScope.embedded = $location.search().embedded === 'true' ? true : false;
 
     $rootScope.get_auth_headers = Authentication.get_auth_headers;
 
@@ -43,14 +44,6 @@ GLClient.controller('MainCtrl', ['$q', '$scope', '$rootScope', '$http', '$route'
       document.getElementById("BrowserNotSupported").style.display = "block";
     };
 
-    $scope.reset_session = function() {
-      $scope.session_id = undefined;
-      $scope.role = undefined;
-      $scope.preferencespage = undefined;
-      $scope.auth_landing_page = undefined;
-      $scope.homepage = undefined;
-    };
-
     $scope.today = function() {
       return new Date();
     };
@@ -60,8 +53,8 @@ GLClient.controller('MainCtrl', ['$q', '$scope', '$rootScope', '$http', '$route'
       model.$update(function(result) {
         $rootScope.successes.push(success);
       }).then(
-        function() { if (cb !== undefined) cb(); },
-        function() { if (errcb !== undefined) errcb(); }
+        function() { if (cb !== undefined){ cb(); } },
+        function() { if (errcb !== undefined){ errcb(); } }
       );
     };
 
@@ -154,7 +147,6 @@ GLClient.controller('MainCtrl', ['$q', '$scope', '$rootScope', '$http', '$route'
 
     $scope.route_check = function () {
       if ($rootScope.node) {
-
         if ($rootScope.node.wizard_done === false) {
           $location.path('/wizard');
         }
@@ -232,7 +224,7 @@ GLClient.controller('MainCtrl', ['$q', '$scope', '$rootScope', '$http', '$route'
       var key = $scope.getYOrderProperty(elements[0]);
       if (elements.length) {
         var i = 0;
-        var elements = $filter('orderBy')(elements, key);
+        elements = $filter('orderBy')(elements, key);
         angular.forEach(elements, function (element) {
           element[key] = i;
           i += 1;
@@ -246,7 +238,7 @@ GLClient.controller('MainCtrl', ['$q', '$scope', '$rootScope', '$http', '$route'
 
     $rootScope.getUploadUrl = function(url) {
       if ($scope.requireLegacyUploadSupport()) {
-        url += '?session=' + Authentication.session;
+        url += '?session=' + $scope.session;
       }
 
       return url;
@@ -261,7 +253,7 @@ GLClient.controller('MainCtrl', ['$q', '$scope', '$rootScope', '$http', '$route'
     $scope.init = function () {
       var deferred = $q.defer();
 
-      $scope.app_logo = 'static/globaleaks_logo.png?' + $scope.randomFluff();
+      $scope.app_logo = 'static/logo.png?' + $scope.randomFluff();
       $scope.app_stylesheet = "css/styles.css?" + $scope.randomFluff();
 
       Node.get(function(node, getResponseHeaders) {
@@ -321,7 +313,6 @@ GLClient.controller('MainCtrl', ['$q', '$scope', '$rootScope', '$http', '$route'
 
           if (["ar", "he", "ur"].indexOf(language) !== -1) {
             $scope.rtl = true;
-            alert($scope.rtl);
             document.getElementsByTagName("html")[0].setAttribute('dir', 'rtl');
           } else {
             $scope.rtl = false;
@@ -353,7 +344,7 @@ GLClient.controller('MainCtrl', ['$q', '$scope', '$rootScope', '$http', '$route'
 
     $scope.view_tip = function(keycode) {
       keycode = keycode.replace(/\D/g,'');
-      WhistleblowerTip(keycode, function() {
+      new WhistleblowerTip(keycode, function() {
         $location.path('/status');
       });
     };
@@ -367,9 +358,9 @@ GLClient.controller('MainCtrl', ['$q', '$scope', '$rootScope', '$http', '$route'
     };
 
     $scope.exportJSON = function(data, filename) {
-      var filename = filename == undefined ? 'data.json' : filename;
       var json = angular.toJson(data, 2);
       var blob = new Blob([json], {type: "application/json"});
+      filename = filename === undefined ? 'data.json' : filename;
       saveAs(blob, filename);
     };
 
@@ -403,14 +394,16 @@ GLClient.controller('MainCtrl', ['$q', '$scope', '$rootScope', '$http', '$route'
       var error = false;
 
       for (var key in uploads) {
-        if(uploads[key].isUploading()) {
-          return 'uploading';
-        }
+        if (uploads.hasOwnProperty(key)) {
+          if(uploads[key].isUploading()) {
+            return 'uploading';
+          }
 
-        for (var i=0; i<uploads[key].files.length; i++) {
-          if (uploads[key].files[i].error) {
-            error = true;
-            break;
+          for (var i=0; i<uploads[key].files.length; i++) {
+            if (uploads[key].files[i].error) {
+              error = true;
+              break;
+            }
           }
         }
       }
@@ -423,7 +416,7 @@ GLClient.controller('MainCtrl', ['$q', '$scope', '$rootScope', '$http', '$route'
     };
 
     $scope.isUploading = function(uploads) {
-      return $scope.getUploadStatus(uploads) == 'uploading';
+      return $scope.getUploadStatus(uploads) === 'uploading';
     };
 
     $scope.remainingUploadTime = function(uploads) {
@@ -491,22 +484,13 @@ GLClient.controller('MainCtrl', ['$q', '$scope', '$rootScope', '$http', '$route'
     });
 
     $scope.$watch(function (scope) {
-      return Authentication.id;
+      return Authentication.session;
     }, function (newVal, oldVal) {
-      if (newVal !== undefined) {
-        $scope.session_id = Authentication.id;
-        $scope.username = Authentication.username;
-        $scope.role = Authentication.role;
-        $scope.preferencespage = Authentication.preferencespage;
-        $scope.auth_landing_page = Authentication.auth_landing_page;
-        $scope.homepage = Authentication.homepage;
-      } else {
-        $scope.reset_session();
-      }
+      $scope.session = Authentication.session;
     });
 
     $rootScope.$watch('language', function (newVal, oldVal) {
-      if (newVal && newVal !== oldVal && oldVal != undefined) {
+      if (newVal && newVal !== oldVal && oldVal !== undefined) {
         $rootScope.$broadcast("REFRESH");
       }
     });

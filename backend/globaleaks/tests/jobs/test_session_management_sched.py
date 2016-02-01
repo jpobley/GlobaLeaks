@@ -8,16 +8,20 @@ from globaleaks.handlers import authentication
 from globaleaks.jobs import session_management_sched
 
 class TestSessionManagementSched(helpers.TestGL):
-
     @inlineCallbacks
     def test_session_management_sched(self):
-
         authentication.GLSession('admin', 'admin', 'enabled') # 1!
         authentication.GLSession('admin', 'admin', 'enabled') # 2!
         authentication.GLSession('admin', 'admin', 'enabled') # 3!
 
         self.assertEqual(len(GLSettings.sessions), 3)
-        authentication.reactor_override.advance(GLSettings.authentication_lifetime)
+
+        self.test_reactor.pump([1] * (GLSettings.authentication_lifetime - 1))
+
+        self.assertEqual(len(GLSettings.sessions), 3)
+
+        self.test_reactor.advance(1)
+
         self.assertEqual(len(GLSettings.sessions), 0)
 
         yield session_management_sched.SessionManagementSchedule().operation()

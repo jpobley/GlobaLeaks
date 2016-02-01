@@ -13,15 +13,24 @@ usage() {
   echo -e " -t tagname (build specific release/branch)"
   echo -e " -d distribution (available: precise, trusty, wheezy, jessie)"
   echo -e " -n (do not sign)"
+  echo -e " -p (push on repository)"
 }
 
-while getopts "d:nt:h" opt; do
+TARGETS="precise trusty xenial wheezy jessie stretch"
+DISTRIBUTION="trusty"
+TAG="master"
+NOSIGN=0
+PUSH=0
+
+while getopts "d:t:np:h" opt; do
   case $opt in
     d) DISTRIBUTION="$OPTARG"
     ;;
     t) TAG="$OPTARG"
     ;;
     n) NOSIGN=1
+    ;;
+    p) PUSH=1
     ;;
     h)
         usage
@@ -33,25 +42,19 @@ while getopts "d:nt:h" opt; do
   esac
 done
 
-if [ "$DISTRIBUTION" != "all" ] &&
-   [ "$DISTRIBUTION" != "precise" ] &&
-   [ "$DISTRIBUTION" != "trusty" ] &&
-   [ "$DISTRIBUTION" != "wheezy" ] &&
-   [ "$DISTRIBUTION" != "jessie" ]; then
+if ! [[ $TARGETS =~ $DISTRIBUTION ]] && [[ $DISTRIBUTION != 'all' ]]; then
  usage
  exit 1
 fi
 
-if [ "$DISTRIBUTION" == "all" ]; then
-  TARGETS="precise trusty wheezy jessie"
-else
+if [ "$DISTRIBUTION" != 'all' ]; then
   TARGETS=$DISTRIBUTION
 fi
 
 # Preliminary Requirements Check
 ERR=0
 echo "Checking preliminary GlobaLeaks Build requirements"
-for REQ in git npm debuild
+for REQ in git npm debuild dput
 do
   if which $REQ >/dev/null; then
     echo " + $REQ requirement meet"
@@ -90,7 +93,7 @@ for TARGET in $TARGETS; do
   cp -r $BUILDSRC $BUILDDIR
   cd $BUILDDIR/GlobaLeaks
   rm debian/control
-  ln -s control.$TARGET debian/control
+  ln -s controlX/control.$TARGET debian/control
   sed -i "s/stable; urgency=/$TARGET; urgency=/g" debian/changelog
 
   if [ $NOSIGN -eq 1 ]; then
@@ -101,3 +104,16 @@ for TARGET in $TARGETS; do
 
   cd ../../
 done
+
+if [ $PUSH -eq 1 ]; then
+  for TARGET in $TARGETS; do
+
+    BUILDDIR="GLRelease-$TARGET"
+
+    cp -r $BUILDSRC $BUILDDIR
+
+    dput globaleaks globaleaks*changes
+
+    cd ../../
+  done
+fi

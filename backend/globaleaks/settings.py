@@ -1,14 +1,17 @@
 # -*- coding: UTF-8
 # settings: Define GLSettings, main class handling GlobaLeeaks runtime settings
 # ******
+from __future__ import print_function
+
 import glob
-import shutil
 import logging
 import pwd
 import grp
 import getpass
 from optparse import OptionParser
 from ctypes import CDLL
+
+from distutils import dir_util
 
 import re
 import os
@@ -19,6 +22,7 @@ from twisted.python.threadpool import ThreadPool
 
 from globaleaks import __version__, DATABASE_VERSION, LANGUAGES_SUPPORTED_CODES
 from globaleaks.utils.singleton import Singleton
+from globaleaks.utils.tempdict import TempDict
 
 this_directory = os.path.dirname(__file__)
 
@@ -88,8 +92,7 @@ class GLSettingsClass(object):
         self.root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
         self.pid_path = '/var/run/globaleaks'
         self.working_path = '/var/globaleaks'
-
-        self.static_source = '/usr/share/globaleaks/backend'
+        self.static_source = '/usr/share/globaleaks/data'
 
         self.client_path = '/usr/share/globaleaks/client'
         for path in possible_client_paths:
@@ -102,7 +105,8 @@ class GLSettingsClass(object):
         self.default_password = 'globaleaks'
 
         # some singleton classes: sessions and some event queues
-        self.sessions = {}
+        self.authentication_lifetime = 3600
+        self.sessions = TempDict(timeout=self.authentication_lifetime)
         self.RecentEventQ = []
         self.RecentAnomaliesQ = {}
 
@@ -112,15 +116,12 @@ class GLSettingsClass(object):
         # and resetted by session_management sched
         self.failed_login_attempts = 0
 
-        # download tocken trackin
-        self.download_tokens = dict()
-
         # static file rules
         self.staticfile_regexp = r'(.*)'
         self.staticfile_overwrite = False
 
         self.reserved_names = OD({
-          'logo': 'globaleaks_logo',
+          'logo': 'logo',
           'css': 'custom_stylesheet',
           'html': 'custom_homepage'
         })
@@ -130,8 +131,6 @@ class GLSettingsClass(object):
         self.configured_hosts = []
 
         self.receipt_regexp = u'[0-9]{16}'
-
-        self.authentication_lifetime = 3600
 
         # A lot of operations performed massively by globaleaks
         # should avoid to fetch continuously variables from the DB so that
@@ -198,17 +197,7 @@ class GLSettingsClass(object):
         # size used while streaming files
         self.file_chunk_size = 8192
 
-        # Disk file encryption in realtime
-        # if the key is fine or is not.
-        # this key permit Globaleaks to resist on application restart
-        # not to a reboot! (is written in GLSettings.
-        # key is initialized and stored in key path.
-        # key_id contains an identifier of the key (when system reboots,
-        # key changes.
-        ### you can read more about this security measure in the document:
-        ### https://github.com/globaleaks/GlobaLeaks/wiki/Encryption
         self.AES_key_size = 32
-        # This key_id is just to identify the keys, and is generated with
         self.AES_key_id_regexp = u'[A-Za-z0-9]{16}'
         self.AES_counter_nonce = 128 / 8
         self.AES_file_regexp = r'(.*)\.aes'
@@ -219,7 +208,7 @@ class GLSettingsClass(object):
         self.exceptions_email_count = 0
         self.exceptions_email_hourly_limit = 20
 
-        # Extreme debug option triggered by --XXX, that's are the defaults
+        # Extreme debug options triggered by --XXX, that's are the defaults
         self.debug_option_in_the_future = 0
         self.debug_option_UUID_human = ""
         self.debug_UUID_human_counter = 0
@@ -239,16 +228,11 @@ class GLSettingsClass(object):
         reactor.addSystemEventTrigger('after', 'shutdown', self.orm_tp.stop)
         self.orm_tp.start()
 
-    def increment_mail_counter(self, receiver_id):
-        if receiver_id in self.mail_counters:
-            self.mail_counters[receiver_id] += 1
-        else:
-            self.mail_counters[receiver_id] = 1
-
     def get_mail_counter(self, receiver_id):
-        if receiver_id not in self.mail_counters:
-            return 0
-        return self.mail_counters[receiver_id]
+        return self.mail_counters.get(receiver_id, 0)
+
+    def increment_mail_counter(self, receiver_id):
+        self.mail_counters[receiver_id] = self.mail_counters.get(receiver_id, 0) + 1
 
     def eval_paths(self):
         self.config_file_path = '/etc/globaleaks'
@@ -283,13 +267,10 @@ class GLSettingsClass(object):
         self.appdata_file = os.path.join(self.client_path, 'data/appdata.json')
         self.fields_path = os.path.join(self.client_path, 'data/fields')
 
-
     def set_ramdisk_path(self):
         self.ramdisk_path = '/dev/shm/globaleaks'
         if not os.path.isdir('/dev/shm'):
             self.ramdisk_path = os.path.join(self.working_path, 'ramdisk')
-
-        self.log_debug("Setting ramdisk to: %s" % self.ramdisk_path)
 
     def set_devel_mode(self):
         self.devel_mode = True
@@ -302,7 +283,7 @@ class GLSettingsClass(object):
 
         self.pid_path = os.path.join(self.root_path, 'workingdir')
         self.working_path = os.path.join(self.root_path, 'workingdir')
-        self.static_source = os.path.join(self.root_path, 'staticdata')
+        self.static_source = os.path.join(self.root_path, '../data')
 
         self.set_ramdisk_path()
 
@@ -325,12 +306,12 @@ class GLSettingsClass(object):
         can in fact be empty
         """
         if not os.path.isdir(tor_dir):
-            print "Invalid directory provided as -D argument (%s)" % self.cmdline_options.tor_dir
+            self.print_msg("Invalid directory provided as -D argument (%s)" % self.cmdline_options.tor_dir)
             return False
 
         hostname_tor_file = os.path.join(tor_dir, 'hostname')
         if not os.path.isfile(hostname_tor_file):
-            print "Not found 'hostname' file as expected in Tor dir (-D %s): skipped" % tor_dir
+            self.print_msg("Not found 'hostname' file as expected in Tor dir (-D %s): skipped" % tor_dir)
             return False
 
         return True
@@ -383,7 +364,7 @@ class GLSettingsClass(object):
             hostname_tor_file = os.path.join(self.cmdline_options.tor_dir, 'hostname')
 
             if not os.access(hostname_tor_file, os.R_OK):
-                print "Tor HS file in %s cannot be read" % hostname_tor_file
+                self.print_msg("Tor HS file in %s cannot be read" % hostname_tor_file)
                 quit(-1)
 
             with file(hostname_tor_file, 'r') as htf:
@@ -414,7 +395,7 @@ class GLSettingsClass(object):
             self.uid = os.getuid()
 
         if self.uid == 0 or self.gid == 0:
-            print "Invalid user: cannot run as root"
+            self.print_msg("Invalid user: cannot run as root")
             quit(-1)
 
         self.start_clean = self.cmdline_options.start_clean
@@ -423,8 +404,7 @@ class GLSettingsClass(object):
             self.working_path = self.cmdline_options.working_path
 
         if self.cmdline_options.developer_name:
-            print "Enabling Development Mode for %s" % \
-                  self.cmdline_options.developer_name
+            self.print_msg("Enabling development mode for %s" % self.cmdline_options.developer_name)
             self.developer_name = unicode(self.cmdline_options.developer_name)
             self.set_devel_mode()
 
@@ -438,9 +418,9 @@ class GLSettingsClass(object):
         # special evaluation of client directory:
         indexfile = os.path.join(self.client_path, 'index.html')
         if os.path.isfile(indexfile):
-            print "Serving the client from directory: %s" % self.client_path
+            self.print_msg("Serving the client from directory: %s" % self.client_path)
         else:
-            print "Unable to find a directory where to load the client"
+            self.print_msg("Unable to find a directory where to load the client")
             quit(-1)
 
         if self.devel_mode:
@@ -451,16 +431,17 @@ class GLSettingsClass(object):
             # hardcore extremely dangerous --XXX option trigger
             # one,two,three
             if self.cmdline_options.xxx:
-                print "\033[1;33mHardcore dangerous hazardous radioactive --XXX option used!\033[0m"
+                self.print_msg("\033[1;33mHardcore dangerous hazardous radioactive --XXX option used!\033[0m")
                 hardcore_opts = self.cmdline_options.xxx.split(',')
                 if len(hardcore_opts):
                     try:
                         GLSettings.debug_option_in_the_future = int(hardcore_opts[0])
                     except ValueError:
-                        print "Invalid number of seconds provided:", hardcore_opts[0]
+                        self.print_msg("Invalid number of seconds provided:", hardcore_opts[0])
                         quit(-1)
-                    print "→ \033[1;31mUsing", GLSettings.debug_option_in_the_future, \
-                        "seconds in the future\033[0m"
+
+                    self.print_msg("→ \033[1;31mUsing %d seconds in the future\033[0m" % \
+                        GLSettings.debug_option_in_the_future)
 
                 if len(hardcore_opts) > 1 and len(hardcore_opts[1]) > 1:
                     # at least two byte needed, so you can skip this option
@@ -469,19 +450,19 @@ class GLSettingsClass(object):
                     if len(GLSettings.debug_option_UUID_human) > 8:
                         GLSettings.debug_option_UUID_human = GLSettings.debug_option_UUID_human[:8]
 
-                    print "→ \033[1;31mUsing", GLSettings.debug_option_UUID_human, \
-                        "to generate human readable UUIDv4\033[0m"
+                    self.print_msg("→ \033[1;31mUsing %s to generate human readable UUIDv4\033[0m" % \
+                        GLSettings.debug_option_UUID_human)
 
                 if len(hardcore_opts) > 2 and len(hardcore_opts[2]) > 1:
                     self.debug_option_mlockall = True
-                    print "→ \033[1;31mUsing mlockall(2) system call to prevent GlobaLeaks swap\033[0m"
+                    self.print_msg("→ \033[1;31mUsing mlockall(2) system call to prevent GlobaLeaks swap\033[0m")
                     self.avoid_globaleaks_swap()
 
-                print "\n"
+                self.print_msg("\n")
 
     def validate_port(self, inquiry_port):
         if inquiry_port >= 65535 or inquiry_port < 0:
-            print "Invalid port number ( > than 65535 can't work! )"
+            self.print_msg("Invalid port number ( > than 65535 can't work! )")
             return False
         return True
 
@@ -494,8 +475,24 @@ class GLSettingsClass(object):
         # lock memory from swapping that is created in the FUTURE
         # (does NOT apply to stuff that is already in memory!)
         if libc.mlockall(2):
-            print "Unable to libc.mlockall"
+            self.print_msg("Unable to libc.mlockall")
             quit(-1)
+
+    def create_directory(self, path):
+        """
+        Create the specified directory;
+        Returns True on success, False if the directory was already existing
+        """
+        if not os.path.exists(path):
+            try:
+                os.mkdir(path)
+            except OSError as excep:
+                self.print_msg("Error in creating directory: %s (%s)" % (path, excep.strerror))
+                raise excep
+
+            return True
+
+        return False
 
     def create_directories(self):
         """
@@ -505,58 +502,20 @@ class GLSettingsClass(object):
         here the static files (default logs, and in the future pot files for localization)
         because here stay all the files needed by the application except the python scripts
         """
-        new_environment = False
+        for dirpath in [self.working_path,
+                        self.db_path,
+                        self.glfiles_path,
+                        self.submission_path,
+                        self.tmp_upload_path,
+                        self.torhs_path,
+                        self.log_path,
+                        self.ramdisk_path]:
+            self.create_directory(dirpath)
 
-        def create_directory(path):
-            # returns false if the directory is already present
-            if not os.path.exists(path):
-                try:
-                    os.mkdir(path)
-                    self.log_debug("Created directory %s" % path)
-                    return True
-                except OSError as excep:
-                    self.log_debug("Error in creating directory: %s (%s)" % (path, excep.strerror))
-                    raise excep
-            else:
-                if not os.path.isdir(path):
-                    self.log_debug("Error creating directory: %s (path exists and is not a dir)" % path)
-                    raise Exception("Error creating directory: %s (path exists and is not a dir)" % path)
-                return False
-
-        if create_directory(self.working_path):
-            new_environment = True
-
-        create_directory(self.db_path)
-        create_directory(self.glfiles_path)
-        create_directory(self.static_path)
-        create_directory(self.static_path_l10n)
-        create_directory(self.submission_path)
-        create_directory(self.tmp_upload_path)
-        create_directory(self.log_path)
-        create_directory(self.torhs_path)
-        create_directory(self.ramdisk_path)
-
-        logo_path = os.path.join(self.static_path, "%s.png" % GLSettings.reserved_names.logo)
-        # Missing default logo: is supposed we're initializing a new globaleaks directory
-        # happen in unitTest and when a new working directory is specify
-        if not os.path.isfile(logo_path):
-            new_environment = True
-
+        new_environment = self.create_directory(self.static_path)
         if new_environment:
-            almost_one_file = 0
-            for _, _, files in os.walk(self.static_source):
-                almost_one_file += 1
-                # REMIND: at the moment are not supported subpaths
-                for single_file in files:
-                    shutil.copyfile(
-                        os.path.join(self.static_source, single_file),
-                        os.path.join(self.static_path, single_file)
-                    )
-
-            if not almost_one_file:
-                print "[Non fatal error] Found empty: %s" % self.static_source
-                print "Your instance has not torrc and the default logo"
-
+            dir_util.copy_tree(self.static_source, self.static_path)
+            self.create_directory(self.static_path_l10n)
 
     def check_directories(self):
         for path in (self.working_path, self.root_path, self.client_path,
@@ -592,7 +551,7 @@ class GLSettingsClass(object):
                 os.chown(path, self.uid, self.gid)
                 os.chmod(path, 0700)
         except Exception as excep:
-            print "Unable to update permissions on %s: %s" % (path, excep)
+            self.print_msg("Unable to update permissions on %s: %s" % (path, excep))
             quit(-1)
 
         for item in glob.glob(path + '/*'):
@@ -603,39 +562,33 @@ class GLSettingsClass(object):
                     os.chown(item, self.uid, self.gid)
                     os.chmod(item, 0700)
                 except Exception as excep:
-                    print "Unable to update permissions on %s: %s" % (item, excep)
+                    self.print_msg("Unable to update permissions on %s: %s" % (item, excep))
                     quit(-1)
 
     def remove_directories(self):
-        for root, dirs, files in os.walk(self.working_path, topdown=False):
-            for name in files:
-                os.remove(os.path.join(root, name))
-            for name in dirs:
-                os.rmdir(os.path.join(root, name))
+        if os.path.exists(self.working_path):
+            dir_util.remove_tree(self.working_path, 0)
 
     def drop_privileges(self):
         if os.getgid() != self.gid:
             try:
-                print "switching group privileges since %d to %d" % (os.getgid(), self.gid)
+                self.print_msg("switching group privileges since %d to %d" % (os.getgid(), self.gid))
                 os.setgid(self.gid)
             except OSError as droperr:
-                print "unable to drop group privileges: %s" % droperr.strerror
+                self.print_msg("unable to drop group privileges: %s" % droperr.strerror)
                 quit(-1)
 
         if os.getuid() != self.uid:
             try:
-                print "switching user privileges since %d to %d" % (os.getuid(), self.uid)
+                self.print_msg("switching user privileges since %d to %d" % (os.getuid(), self.uid))
                 os.setuid(self.uid)
             except OSError as droperr:
-                print "unable to drop user privileges: %s" % droperr.strerror
+                self.print_msg("unable to drop user privileges: %s" % droperr.strerror)
                 quit(-1)
 
-    def log_debug(self, message):
-        """
-        Log to stdout only if debug is set at higher levels
-        """
-        if self.loglevel == logging.DEBUG:
-            print message
+    def print_msg(self, *args):
+        if not self.testing:
+            print(*args)
 
     def cleaning_dead_files(self):
         """
@@ -648,12 +601,12 @@ class GLSettingsClass(object):
         # temporary .aes files must be simply deleted
         for f in os.listdir(GLSettings.tmp_upload_path):
             path = os.path.join(GLSettings.tmp_upload_path, f)
-            print "Removing old temporary file: %s" % path
+            self.print_msg("Removing old temporary file: %s" % path)
 
             try:
                 os.remove(path)
             except OSError as excep:
-                print "Error while evaluating removal for %s: %s" % (path, excep.strerror)
+                self.print_msg("Error while evaluating removal for %s: %s" % (path, excep.strerror))
 
         # temporary .aes files with lost keys can be deleted
         # while temporary .aes files with valid current key
@@ -666,10 +619,10 @@ class GLSettingsClass(object):
                 result = GLSettings.AES_file_regexp_comp.match(f)
                 if result is not None:
                     if not os.path.isfile("%s%s" % (keypath, result.group(1))):
-                        print "Removing old encrypted file (lost key): %s" % path
+                        self.print_msg("Removing old encrypted file (lost key): %s" % path)
                         os.remove(path)
             except Exception as excep:
-                print "Error while evaluating removal for %s: %s" % (path, excep)
+                self.print_msg("Error while evaluating removal for %s: %s" % (path, excep))
 
 
 # GLSettings is a singleton class exported once

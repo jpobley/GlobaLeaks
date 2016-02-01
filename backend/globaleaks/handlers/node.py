@@ -89,6 +89,7 @@ def serialize_node(store, language):
         'accept_submissions': GLSettings.accept_submissions,
         'enable_captcha': node.enable_captcha,
         'enable_proof_of_work': node.enable_proof_of_work,
+        'enable_experimental_features': node.enable_experimental_features
     }
 
     return get_localized_values(ret_dict, node, node.localized_keys, language)
@@ -109,7 +110,8 @@ def serialize_context(store, context, language):
         'select_all_receivers': context.select_all_receivers,
         'maximum_selectable_receivers': context.maximum_selectable_receivers,
         'show_context': context.show_context,
-        'show_receivers': context.show_receivers,
+        'show_recipients_details': context.show_recipients_details,
+        'allow_recipients_selection': context.allow_recipients_selection,
         'show_small_cards': context.show_small_cards,
         'enable_comments': context.enable_comments,
         'enable_messages': context.enable_messages,
@@ -119,7 +121,6 @@ def serialize_context(store, context, language):
         'field_whistleblower_identity': '',
         'show_receivers_in_alphabetical_order': context.show_receivers_in_alphabetical_order,
         'questionnaire_layout': context.questionnaire_layout,
-        'custodians': [c.id for c in context.custodians],
         'receivers': [r.id for r in context.receivers],
         'steps': [serialize_step(store, s, language) for s in context.steps]
     }
@@ -277,8 +278,8 @@ def get_public_context_list(store, language):
 
 
 @transact_ro
-def get_public_receivers_list(store, language):
-    receivers_list = []
+def get_public_receiver_list(store, language):
+    receiver_list = []
 
     for receiver in store.find(models.Receiver):
         if receiver.user.state == u'disabled':
@@ -287,9 +288,9 @@ def get_public_receivers_list(store, language):
         receiver_desc = serialize_receiver(receiver, language)
         # receiver not yet ready for submission return None
         if receiver_desc:
-            receivers_list.append(receiver_desc)
+            receiver_list.append(receiver_desc)
 
-    return receivers_list
+    return receiver_list
 
 
 class NodeInstance(BaseHandler):
@@ -352,5 +353,5 @@ class ReceiversCollection(BaseHandler):
         Get all the receivers.
         """
         ret = yield GLApiCache.get('receivers', self.request.language,
-                                   get_public_receivers_list, self.request.language)
+                                   get_public_receiver_list, self.request.language)
         self.finish(ret)

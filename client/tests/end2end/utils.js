@@ -8,14 +8,22 @@ exports.waitUntilReady = function (elm, timeout) {
    }, timeout);
 };
 
+
 browser.getCapabilities().then(function(s) {
   exports.testFileUpload = function() {
-    return (s.caps_.platform === 'LINUX');
+    var browserName = s.caps_.browserName.toLowerCase();
+    return (['chrome', 'firefox', 'internet explorer', 'edge'].indexOf(browserName) !== -1);
+  };
+
+  exports.testFileDownload = function() {
+    // The only browser that does not ask for user interaction is chrome
+    var browserName = s.caps_.browserName.toLowerCase();
+    return (['chrome'].indexOf(browserName) !== -1);
   };
 
   exports.isOldIE = function() {
-    browserName = s.caps_.browserName;
-    browserVersion = s.caps_.version;
+    var browserName = s.caps_.browserName.toLowerCase();
+    var browserVersion = s.caps_.version;
     return (browserName == 'internet explorer' && browserVersion < 11);
   };
 });
@@ -23,7 +31,7 @@ browser.getCapabilities().then(function(s) {
 
 exports.waitForUrl = function (url) {
   browser.wait(function() {
-    return browser.getLocationAbsUrl().then(function(current_url) {
+    return browser.getCurrentUrl().then(function(current_url) {
       return (current_url.indexOf(url) !== -1);
     });
   });

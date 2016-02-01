@@ -1,9 +1,6 @@
 from globaleaks.settings import GLSettings
-from globaleaks.utils.tempobj import TempObj
+from globaleaks.utils.tempdict import TempDict
 from globaleaks.utils.utility import log, datetime_now, datetime_to_ISO8601
-
-# needed in order to allow UT override
-reactor_override = None
 
 # follow the checker, they are executed from handlers/base.py
 # by prepare() and/or flush()
@@ -133,7 +130,7 @@ outcoming_event_monitored = [
 ]
 
 
-class EventTrack(TempObj):
+class EventTrack(object):
     """
     Every event that is kept in memory, is a temporary object.
     Once a while, they disappear. The statistics just take
@@ -161,58 +158,44 @@ class EventTrack(TempObj):
         if self.debug:
             log.debug("Creation of Event %s" % self.serialize_event())
 
-        TempObj.__init__(self,
-                         EventTrackQueue.queue,
-                         self.event_id,
-                         10, # seconds of validity
-                         reactor_override)
-
-        self.expireCallbacks.append(self.synthesis)
-
-    def synthesis(self):
-        """
-        This is a callback append to the expireCallbacks, and
-        just make a synthesis of the Event in the RecentEventQ
-        """
-        GLSettings.RecentEventQ.append(
-            dict({
-                'id': self.event_id,
-                'creation_date': datetime_to_ISO8601(self.creation_date)[:-8],
-                'event':  self.event_type,
-                'duration': round(self.request_time, 1),
-            })
-        )
+        EventTrackQueue.set(self.event_id, self)
 
     def __repr__(self):
         return "%s" % self.serialize_event()
 
+    def synthesis(self):
+        return {
+            'id': self.event_id,
+            'creation_date': datetime_to_ISO8601(self.creation_date)[:-8],
+            'event':  self.event_type,
+            'duration': round(self.request_time, 1),
+        }
 
-class EventTrackQueue(object):
+
+class EventTrackQueueClass(TempDict):
     """
     This class has only a class variable, used to stock the queue of the
     event happened on the latest minutes.
     """
-    queue = dict()
     event_absolute_counter = 0
 
-    @staticmethod
-    def event_number():
-        EventTrackQueue.event_absolute_counter += 1
-        return EventTrackQueue.event_absolute_counter
-
-    @staticmethod
-    def take_current_snapshot():
+    def expireCallback(self, event):
         """
-        Called only by the handler /admin/activities
+        On expiration of an event perform the synthesis and
+        append them to the RecentEventQueue.
         """
-        serialized_ret = []
+        GLSettings.RecentEventQ.append(event.synthesis())
 
-        for _, event_obj in EventTrackQueue.queue.iteritems():
-            serialized_ret.append(event_obj.serialize_event())
+    def event_number(self):
+        self.event_absolute_counter += 1
+        return self.event_absolute_counter
 
-        return serialized_ret
+    def take_current_snapshot(self):
+        return [event_obj.serialize_event() for _, event_obj in EventTrackQueue.iteritems()]
 
-    @staticmethod
-    def reset():
-        EventTrackQueue.queue = dict()
-        EventTrackQueue.event_absolute_counter = 0
+    def reset(self):
+        self.clear()
+        self.event_absolute_counter = 0
+
+
+EventTrackQueue = EventTrackQueueClass()

@@ -1,7 +1,6 @@
 #include <tunables/global>
 
 profile usr.bin.globaleaks {
-
     #include <abstractions/base>
     #include <abstractions/nameservice>
 
@@ -18,7 +17,9 @@ profile usr.bin.globaleaks {
     /usr/bin/ r,
     /usr/bin/globaleaks r,
 
-    /bin/sh ix, # needed due to python_gnupg implementation using shell
+    # sh, dash and gpg are required by python_gnupg
+    # that sadly use the shell for communicating to gnupg
+    /bin/sh ix,
     /bin/dash ix,
     /usr/bin/gpg ix,
 
@@ -28,9 +29,6 @@ profile usr.bin.globaleaks {
     /usr/local/lib/python2.7/** mr,
     /etc/python2.7/** r,
     /etc/mime.types r,
-
-    deny /usr/bin/gcc-** x, # needed to silent deny errors for gpg trying to use gcc wtf?!
-    deny /sbin/ldconfig x,  # needed to silent deny errors for gpg
 
     /var/globaleaks/ r,
     /var/globaleaks/** lrwk,
@@ -42,4 +40,9 @@ profile usr.bin.globaleaks {
 
     owner /tmp/** rwkl,
     owner /var/tmp/** rwkl,
+
+    # Explicit silent deny rules:
+    deny /bin/uname x,      # needed by os.uname in pip
+    deny /usr/bin/gcc-** x, # needed to silent deny errors for gpg trying to use gcc wtf?!
+    deny /sbin/ldconfig x   # needed to silent deny errors for gpg
 }

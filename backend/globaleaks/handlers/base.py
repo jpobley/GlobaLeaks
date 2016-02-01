@@ -128,6 +128,9 @@ class BaseHandler(RequestHandler):
         self.req_id = GLSettings.requests_counter
         GLSettings.requests_counter += 1
 
+        self.request.language = GLSettings.memory_copy.default_language
+        self.request.import_export = None
+
     def set_default_headers(self):
         """
         In this function are written some security enforcements
@@ -160,10 +163,12 @@ class BaseHandler(RequestHandler):
         if not GLSettings.memory_copy.allow_iframes_inclusion:
             self.set_header("X-Frame-Options", "sameorigin")
 
-        if 'import' in self.request.arguments or 'export' in self.request.arguments:
-            self.request.language = None
-        else:
-            self.request.language = self.request.headers.get('GL-Language', GLSettings.memory_copy.default_language)
+        if 'import' in self.request.arguments:
+            self.request_type = 'import'
+        elif 'export' in self.request.arguments:
+            self.request_type = 'export'
+
+        self.request.language = self.request.headers.get('GL-Language', GLSettings.memory_copy.default_language)
 
     @staticmethod
     def validate_python_type(value, python_type):
@@ -368,9 +373,6 @@ class BaseHandler(RequestHandler):
             log.err("Unable to open %s: %s" % (GLSettings.httplogfile, excep))
 
     def write_file(self, filepath):
-        if not (os.path.exists(filepath) or os.path.isfile(filepath)):
-            return
-
         try:
             with open(filepath, "rb") as f:
                 while True:
@@ -437,7 +439,7 @@ class BaseHandler(RequestHandler):
         if session_id is None:
             return None
 
-        return GLSettings.sessions.get(session_id, None)
+        return GLSettings.sessions.get(session_id)
 
     def get_file_upload(self):
         try:

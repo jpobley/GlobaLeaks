@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 #
-# collection
+# export
 # *****
 #
-# File Collections handlers and utils
+# Tip export utils
+import copy
 
 from twisted.internet.defer import inlineCallbacks
 
@@ -14,11 +15,12 @@ from globaleaks.handlers.admin.context import admin_serialize_context
 from globaleaks.handlers.admin.node import db_admin_serialize_node
 from globaleaks.handlers.admin.notification import db_get_notification
 from globaleaks.handlers.admin.receiver import admin_serialize_receiver
-from globaleaks.handlers.rtip import db_access_rtip, serialize_rtip
 from globaleaks.handlers.authentication import transport_security_check, authenticated
 from globaleaks.handlers.base import BaseHandler
 from globaleaks.handlers.files import serialize_receiver_file
-from globaleaks.handlers.submission import serialize_usertip
+from globaleaks.handlers.rtip import db_access_rtip, serialize_rtip, \
+    db_get_comment_list, db_get_message_list
+from globaleaks.handlers.submission import get_submission_sequence_number
 from globaleaks.models import ReceiverTip, ReceiverFile
 from globaleaks.rest import errors
 from globaleaks.utils.templating import Templating
@@ -26,56 +28,36 @@ from globaleaks.utils.zipstream import ZipStream
 
 
 @transact_ro
-def get_rtip_info(store, rtip_id, language):
-    """
-    This function return a receiver tip
-    """
-    rtip = store.find(ReceiverTip, ReceiverTip.id == rtip_id).one()
-    if not rtip:
-        raise errors.TipIdNotFound
-
-    rtip_dict = serialize_usertip(store, rtip, language)
-
-    return rtip_dict
-
-
-@transact
-def get_file_collection(store, user_id, rtip_id):
+def get_tip_export(store, user_id, rtip_id):
     rtip = db_access_rtip(store, user_id, rtip_id)
 
-    archive_dict = {'files': [], 'file_counter': 0, 'total_size': 0}
-
-    file_list = []
+    files = []
     for rf in store.find(models.ReceiverFile, models.ReceiverFile.receivertip_id == rtip_id):
         rf.downloads += 1
-        file_list.append(serialize_receiver_file(rf))
-        archive_dict['file_counter'] += 1
-        archive_dict['total_size'] += rf.size
-        archive_dict['files'].append(serialize_receiver_file(rf))
+        file_dict = serialize_receiver_file(rf)
+        file_dict['name'] = 'files/' + file_dict['name']
+        files.append(copy.deepcopy(file_dict))
 
     receiver = rtip.receiver
     user_language = receiver.user.language
 
-    data = {
-        'type': u'archive_description',
+    export_dict = {
+        'type': u'export_template',
         'node': db_admin_serialize_node(store, user_language),
         'notification': db_get_notification(store, user_language),
         'tip': serialize_rtip(store, rtip, user_language),
         'context': admin_serialize_context(store, rtip.internaltip.context, user_language),
         'receiver': admin_serialize_receiver(receiver, user_language),
-        'archive': archive_dict
+        'comments': db_get_comment_list(rtip),
+        'messages': db_get_message_list(rtip),
+        'files': []
     }
 
-    archive_description = Templating().format_template(data['notification']['archive_description'], data).encode('utf-8')
+    export_template = Templating().format_template(export_dict['notification']['export_template'], export_dict).encode('utf-8')
 
-    file_list.append(
-        {
-           'buf': archive_description,
-           'name': "COLLECTION_INFO.txt"
-        }
-    )
+    export_dict['files'].append({'buf': export_template, 'name': "data.txt"})
 
-    return file_list
+    return export_dict
 
 
 @transact_ro
@@ -88,7 +70,7 @@ def get_receiver_from_rtip(store, rtip_id, language):
     return receiver.admin_serialize_receiver(rtip.receiver, language)
 
 
-class CollectionStreamer(object):
+class ExportStreamer(object):
     def __init__(self, handler):
         self.handler = handler
 
@@ -97,22 +79,22 @@ class CollectionStreamer(object):
             self.handler.write(data)
 
 
-class CollectionDownload(BaseHandler):
+class ExportHandler(BaseHandler):
     handler_exec_time_threshold = 3600
 
     @transport_security_check('receiver')
     @authenticated('receiver')
     @inlineCallbacks
     def post(self, rtip_id):
-        files_dict = yield get_file_collection(self.current_user.user_id, rtip_id)
+        tip_export = yield get_tip_export(self.current_user.user_id, rtip_id)
 
         self.set_status(200)
 
         self.set_header('X-Download-Options', 'noopen')
         self.set_header('Content-Type', 'application/octet-stream')
-        self.set_header('Content-Disposition', 'attachment; filename=\"collection.zip\"')
+        self.set_header('Content-Disposition', 'attachment; filename=\"%s.zip\"' % tip_export['tip']['sequence_number'])
 
-        for data in ZipStream(files_dict):
+        for data in ZipStream(tip_export['files']):
             self.write(data)
 
         self.finish()

@@ -210,7 +210,8 @@ class Context(Model):
     """
     show_small_cards = Bool(default=False)
     show_context = Bool(default=True)
-    show_receivers = Bool(default=True)
+    show_recipients_details = Bool(default=False)
+    allow_recipients_selection = Bool(default=False)
     maximum_selectable_receivers = Int(default=0)
     select_all_receivers = Bool(default=False)
 
@@ -247,7 +248,8 @@ class Context(Model):
       'select_all_receivers',
       'show_small_cards',
       'show_context',
-      'show_receivers',
+      'show_recipients_details',
+      'allow_recipients_selection',
       'enable_comments',
       'enable_messages',
       'enable_two_way_comments',
@@ -410,7 +412,6 @@ class Message(Model):
     receivertip_id = Unicode()
     author = Unicode()
     content = Unicode(validator=longtext_v)
-    visualized = Bool(default=False)
 
     type = Unicode()
     # types: 'receiver', whistleblower'
@@ -479,6 +480,8 @@ class Node(Model):
     enable_captcha = Bool(default=True)
     enable_proof_of_work = Bool(default=True)
 
+    enable_experimental_features = Bool(default=False)
+
     whistleblowing_question = JSON(validator=longlocal_v, default=empty_localization)
     whistleblowing_button = JSON(validator=longlocal_v, default=empty_localization)
 
@@ -544,7 +547,8 @@ class Node(Model):
                  'disable_key_code_hint',
                  'disable_donation_panel',
                  'enable_captcha',
-                 'enable_proof_of_work']
+                 'enable_proof_of_work',
+                 'enable_experimental_features']
 
     # wizard_done is not checked because it's set by the backend
 
@@ -612,7 +616,10 @@ class Notification(Model):
     pgp_alert_mail_template = JSON(validator=longlocal_v)
     receiver_notification_limit_reached_mail_template = JSON(validator=longlocal_v)
     receiver_notification_limit_reached_mail_title = JSON(validator=longlocal_v)
-    archive_description = JSON(validator=longlocal_v)
+
+    export_template = JSON(validator=longlocal_v)
+    export_message_recipient = JSON(validator=longlocal_v)
+    export_message_whistleblower = JSON(validator=longlocal_v)
 
     # Whistleblower Identity
     identity_access_authorized_mail_template = JSON(validator=longlocal_v)
@@ -671,7 +678,6 @@ class Notification(Model):
         'message_mail_title',
         'tip_expiration_mail_template',
         'tip_expiration_mail_title',
-        'archive_description',
         'receiver_notification_limit_reached_mail_template',
         'receiver_notification_limit_reached_mail_title',
         'identity_access_authorized_mail_template',
@@ -681,7 +687,10 @@ class Notification(Model):
         'identity_access_request_mail_template',
         'identity_access_request_mail_title',
         'identity_provided_mail_template',
-        'identity_provided_mail_title'
+        'identity_provided_mail_title',
+        'export_template',
+        'export_message_whistleblower',
+        'export_message_recipient'
     ]
 
     int_keys = [
@@ -952,17 +961,6 @@ class ApplicationData(Model):
 
 
 # Follow classes used for Many to Many references
-class CustodianContext(BaseModel):
-    """
-    Class used to implement references between Receivers and Contexts
-    """
-    __storm_table__ = 'custodian_context'
-    __storm_primary__ = 'context_id', 'custodian_id'
-
-    context_id = Unicode()
-    custodian_id = Unicode()
-
-
 class ReceiverContext(BaseModel):
     """
     Class used to implement references between Receivers and Contexts
@@ -1214,13 +1212,6 @@ Context.receivers = ReferenceSet(
     Receiver.id
 )
 
-Context.custodians = ReferenceSet(
-    Context.id,
-    CustodianContext.context_id,
-    CustodianContext.custodian_id,
-    Custodian.id
-)
-
 Receiver.contexts = ReferenceSet(
     Receiver.id,
     ReceiverContext.receiver_id,
@@ -1228,9 +1219,9 @@ Receiver.contexts = ReferenceSet(
     Context.id
 )
 
-models_list = [Node,
+model_list = [Node,
                User, Custodian, Receiver,
-               Context, CustodianContext, ReceiverContext,
+               Context, ReceiverContext,
                Field, FieldOption, FieldAttr,
                FieldAnswer, FieldAnswerGroup,
                OptionActivateField, OptionActivateStep,

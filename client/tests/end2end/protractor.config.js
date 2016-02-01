@@ -4,7 +4,7 @@ exports.config = {
   baseUrl: 'http://127.0.0.1:8082/',
 
   troubleshoot: true,
-  directConnect: false,
+  directConnect: true,
 
   specs: [
     'test-init.js',
@@ -18,11 +18,20 @@ exports.config = {
   ],
 
   capabilities: {
-    'browserName': 'chrome'
+    'browserName': 'chrome',
+    'chromeOptions': {
+      prefs: {
+        'download': {
+          'prompt_for_download': false,
+          'default_directory': '/tmp/'
+        }
+      }
+    }
   },
 
   jasmineNodeOpts: {
-   isVerbose: true,
-   includeStackTrace: true
+    isVerbose: true,
+    includeStackTrace: true,
+    defaultTimeoutInterval: 60000
   }
 };

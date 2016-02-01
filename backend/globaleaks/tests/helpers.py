@@ -22,7 +22,7 @@ reload(sys)
 sys.getdefaultencoding()
 
 
-from globaleaks import db, models, security, event, runner
+from globaleaks import db, models, security, event, runner, jobs
 from globaleaks.anomaly import Alarm
 from globaleaks.db.appdata import load_appdata
 from globaleaks.orm import transact, transact_ro
@@ -35,11 +35,10 @@ from globaleaks.handlers.admin.field import create_field
 from globaleaks.handlers.admin.user import create_admin, create_custodian
 from globaleaks.handlers.submission import create_submission, serialize_usertip, \
     serialize_internalfile, serialize_receiverfile
-from globaleaks.jobs import statistics_sched
 from globaleaks.rest.apicache import GLApiCache
 from globaleaks.settings import GLSettings
 from globaleaks.security import GLSecureTemporaryFile, generateRandomKey, generateRandomSalt
-from globaleaks.utils import token, mailutils
+from globaleaks.utils import tempdict, token, mailutils
 from globaleaks.utils.structures import fill_localized_keys
 from globaleaks.utils.utility import sum_dicts, datetime_null, datetime_now, log
 
@@ -66,13 +65,15 @@ with open(os.path.join(TEST_DIR, 'keys/expired_pgp_key.txt')) as pgp_file:
     EXPIRED_PGP_KEY = unicode(pgp_file.read())
 
 transact.tp = FakeThreadPool()
-reactor_override = task.Clock()
-authentication.reactor_override = reactor_override
-event.reactor_override = reactor_override
-token.reactor_override = reactor_override
-runner.reactor_override = reactor_override
-statistics_sched.StatisticsSchedule.collection_start_time = datetime_now()
 
+# client/app/data/fields/whistleblower_identity.json
+WHISTLEBLOWER_IDENTITY_FIELD_PATH = \
+    os.path.join(GLSettings.client_path,
+                 '../../client/app/data/fields/whistleblower_identity.json')
+
+def load_json_file(file_path):
+    with open(file_path) as f:
+      return json.loads(f.read())
 
 class UTlog:
     @staticmethod
@@ -93,14 +94,9 @@ def init_glsettings_for_unit_tests():
     GLSettings.set_devel_mode()
     GLSettings.logging = None
     GLSettings.scheduler_threadpool = FakeThreadPool()
-    GLSettings.sessions = {}
+    GLSettings.sessions.clear()
     GLSettings.failed_login_attempts = 0
-
-    if os.path.isdir('/dev/shm'):
-        GLSettings.working_path = '/dev/shm/globaleaks'
-    else:
-        GLSettings.working_path = './working_path'
-
+    GLSettings.working_path = './working_path'
     GLSettings.ramdisk_path = os.path.join(GLSettings.working_path, 'ramdisk')
 
     GLSettings.eval_paths()
@@ -117,9 +113,9 @@ def export_fixture(*models):
     :return: a valid JSON string exporting the field.
     """
     return json.dumps([{
-                           'fields': model.dict(),
-                           'class': model.__class__.__name__,
-                       } for model in models], default=str, indent=2)
+        'fields': model.dict(),
+        'class': model.__class__.__name__,
+    } for model in models], default=str, indent=2)
 
 
 @transact
@@ -129,21 +125,21 @@ def import_fixture(store, fixture):
 
     :return: The traditional deferred used for transaction in GlobaLeaks.
     """
-    with open(os.path.join(FIXTURES_PATH, fixture)) as f:
-        data = json.loads(f.read())
-        for mock in data:
-            if mock['class'] == 'Field':
-                if mock['fields']['instance'] != 'reference':
-                    del mock['fields']['template_id']
+    data = load_json_file(os.path.join(FIXTURES_PATH, fixture))
+    for mock in data:
+       for k in mock['fields']:
+           if k.endswidh('_id') and mock['fields'][k] == '':
+               del mock['fields'][k]
 
-                if mock['fields']['step_id'] == '':
-                    del mock['fields']['step_id']
-                if mock['fields']['fieldgroup_id'] == '':
-                    del mock['fields']['fieldgroup_id']
+       mock_class = getattr(models, mock['class'])
+       models.db_forge_obj(store, mock_class, mock['fields'])
+       store.commit()
 
-            mock_class = getattr(models, mock['class'])
-            models.db_forge_obj(store, mock_class, mock['fields'])
-            store.commit()
+
+def change_field_type(field, field_type):
+    field['instance'] = field_type
+    for f in field['children']:
+        change_field_type(f, field_type)
 
 
 def get_file_upload(self):
@@ -158,6 +154,13 @@ class TestGL(unittest.TestCase):
 
     @inlineCallbacks
     def setUp(self):
+        self.test_reactor = task.Clock()
+        jobs.base.test_reactor = self.test_reactor
+        token.TokenList.reactor = self.test_reactor
+        runner.test_reactor = self.test_reactor
+        tempdict.test_reactor = self.test_reactor
+        GLSettings.sessions.reactor = self.test_reactor
+
         init_glsettings_for_unit_tests()
 
         self.setUp_dummy()
@@ -180,7 +183,7 @@ class TestGL(unittest.TestCase):
 
         Alarm.reset()
         event.EventTrackQueue.reset()
-        statistics_sched.StatisticsSchedule.reset()
+        jobs.statistics_sched.StatisticsSchedule.reset()
 
         self.internationalized_text = load_appdata()['node']['whistleblowing_button']
 
@@ -317,17 +320,16 @@ class TestGL(unittest.TestCase):
 
         need to be enhanced generating appropriate data based on the fields.type
         """
-        dummySubmissionDict = {}
-        dummySubmissionDict['context_id'] = context_id
-        dummySubmissionDict['receivers'] = (yield get_context(context_id, 'en'))['receivers']
-        dummySubmissionDict['files'] = []
-        dummySubmissionDict['human_captcha_answer'] = 0
-        dummySubmissionDict['graph_captcha_answer'] = ''
-        dummySubmissionDict['proof_of_work_answer'] = 0
-        dummySubmissionDict['identity_provided'] = False
-        dummySubmissionDict['answers'] = yield self.fill_random_answers(context_id)
-
-        defer.returnValue(dummySubmissionDict)
+        defer.returnValue({
+            'context_id': context_id,
+            'receivers': (yield get_context(context_id, 'en'))['receivers'],
+            'files': [],
+            'human_captcha_answer': 0,
+            'graph_captcha_answer': '',
+            'proof_of_work_answer': 0,
+            'identity_provided': False,
+            'answers': (yield self.fill_random_answers(context_id))
+        })
 
     def get_dummy_file(self, filename=None, content_type=None, content=None):
         if filename is None:
@@ -337,14 +339,14 @@ class TestGL(unittest.TestCase):
             content_type = 'application/octet'
 
         if content is None:
-            content = 'LA VEDI LA SUPERCAZZOLA ? PREMATURA ? unicode €'
+            content = ''.join(unichr(x) for x in range(0x400, 0x40A))
 
         temporary_file = GLSecureTemporaryFile(GLSettings.tmp_upload_path)
 
         temporary_file.write(content)
         temporary_file.avoid_delete()
 
-        dummy_file = {
+        return {
             'body': temporary_file,
             'body_len': len(content),
             'body_filepath': temporary_file.filepath,
@@ -353,15 +355,11 @@ class TestGL(unittest.TestCase):
             'submission': False
         }
 
-        return dummy_file
-
-
     def get_dummy_shorturl(self, x = ''):
         return {
           'shorturl': '/s/shorturl' + str(x),
           'longurl': '/longurl' + str(x)
         }
-
 
     @inlineCallbacks
     def emulate_file_upload(self, token, n):
@@ -478,8 +476,6 @@ class TestGLWithPopulatedDB(TestGL):
 
     @inlineCallbacks
     def fill_data(self):
-        yield do_appdata_init()
-
         # fill_data/create_admin
         self.dummyAdmin = yield create_admin(copy.deepcopy(self.dummyAdminUser), 'en')
         self.dummyAdminUser['id'] = self.dummyAdmin['id']
@@ -487,7 +483,6 @@ class TestGLWithPopulatedDB(TestGL):
         # fill_data/create_custodian
         self.dummyCustodian = yield create_custodian(copy.deepcopy(self.dummyCustodianUser), 'en')
         self.dummyCustodianUser['id'] = self.dummyCustodian['id']
-        custodians_ids = [self.dummyCustodian['id']]
 
         # fill_data/create_receiver
         self.dummyReceiver_1 = yield create_receiver(copy.deepcopy(self.dummyReceiver_1), 'en')
@@ -497,34 +492,21 @@ class TestGLWithPopulatedDB(TestGL):
         receivers_ids = [self.dummyReceiver_1['id'], self.dummyReceiver_2['id']]
 
         # fill_data/create_context
-        self.dummyContext['custodians'] = custodians_ids
         self.dummyContext['receivers'] = receivers_ids
         self.dummyContext = yield create_context(copy.deepcopy(self.dummyContext), 'en')
 
         # fill_data: create field templates
         for idx, field in enumerate(self.dummyFieldTemplates):
-            f = yield create_field(copy.deepcopy(field), 'en')
+            f = yield create_field(copy.deepcopy(field), 'en', 'import')
             self.dummyFieldTemplates[idx]['id'] = f['id']
 
-        # fill_data: create fields and associate them to the context steps
         for idx, field in enumerate(self.dummyFields):
-            field['instance'] = 'instance'
-            if idx <= 2:
-                # "Field 1", "Field 2" and "Generalities" are associated to the first step
-                field['step_id'] = self.dummyContext['steps'][0]['id']
-            else:
-                # Name, Surname, Gender" are associated to field "Generalities"
-                # "Field 1" and "Field 2" are associated to the first step
-                field['fieldgroup_id'] = self.dummyFields[2]['id']
-
-            f = yield create_field(copy.deepcopy(field), 'en')
+            change_field_type(field, 'instance')
+            field['step_id'] = self.dummyContext['steps'][0]['id']
+            f = yield create_field(copy.deepcopy(field), 'en', 'import')
             self.dummyFields[idx]['id'] = f['id']
 
-        self.dummyContext['steps'][0]['children'] = [
-            self.dummyFields[0],  # Field 1
-            self.dummyFields[1],  # Field 2
-            self.dummyFields[2]   # Generalities
-        ]
+            self.dummyContext['steps'][0]['children'].append(f)
 
         yield update_context(self.dummyContext['id'], copy.deepcopy(self.dummyContext), 'en')
 
@@ -550,11 +532,11 @@ class TestGLWithPopulatedDB(TestGL):
     @inlineCallbacks
     def perform_post_submission_actions(self):
         commentCreation = {
-            'content': 'comment!',
+            'content': 'comment!'
         }
 
         messageCreation = {
-            'content': 'message!',
+            'content': 'message!'
         }
 
         identityaccessrequestCreation = {
@@ -564,13 +546,13 @@ class TestGLWithPopulatedDB(TestGL):
         self.dummyRTips = yield self.get_rtips()
 
         for rtip_desc in self.dummyRTips:
-            yield rtip.create_comment_receiver(rtip_desc['receiver_id'],
-                                               rtip_desc['id'],
-                                               commentCreation)
+            yield rtip.create_comment(rtip_desc['receiver_id'],
+                                      rtip_desc['id'],
+                                      commentCreation)
 
-            yield rtip.create_message_receiver(rtip_desc['receiver_id'],
-                                               rtip_desc['id'],
-                                               messageCreation)
+            yield rtip.create_message(rtip_desc['receiver_id'],
+                                      rtip_desc['id'],
+                                      messageCreation)
 
             yield self.emulate_file_append(rtip_desc['id'], 3)
 
@@ -582,11 +564,11 @@ class TestGLWithPopulatedDB(TestGL):
         self.dummyWBTips = yield self.get_wbtips()
 
         for wbtip_desc in self.dummyWBTips:
-            yield wbtip.create_comment_wb(wbtip_desc['id'],
-                                          commentCreation)
+            yield wbtip.create_comment(wbtip_desc['id'],
+                                       commentCreation)
 
             for receiver_id in wbtip_desc['receivers_ids']:
-                yield wbtip.create_message_wb(wbtip_desc['id'], receiver_id, messageCreation)
+                yield wbtip.create_message(wbtip_desc['id'], receiver_id, messageCreation)
 
     @inlineCallbacks
     def perform_full_submission_actions(self):
@@ -630,7 +612,7 @@ class TestHandler(TestGLWithPopulatedDB):
         self._handler.finish = mock_write
 
         # we need to reset settings.session to keep each test independent
-        GLSettings.sessions = dict()
+        GLSettings.sessions.clear()
 
         # we need to reset GLApiCache to keep each test independent
         GLApiCache.invalidate()
@@ -750,170 +732,9 @@ class MockDict():
             'configuration': 'default'
         })
 
-        self.dummyFieldTemplates = [
-            {
-                'id': u'd4f06ad1-eb7a-4b0d-984f-09373520cce7',
-                'key': '',
-                'instance': 'template',
-                'editable': True,
-                'template_id': '',
-                'step_id': '',
-                'fieldgroup_id': '',
-                'label': u'Field 222',
-                'type': u'inputbox',
-                'preview': False,
-                'description': u'field description',
-                'hint': u'field hint',
-                'multi_entry': False,
-                'multi_entry_hint': '',
-                'stats_enabled': False,
-                'required': True,  # <- first field is special,
-                'children': [],    # it's marked as required!!!
-                'attrs': {},
-                'options': [],
-                'y': 2,
-                'x': 0,
-                'width': 0
-            },
-            {
-                'id': u'c4572574-6e6b-4d86-9a2a-ba2e9221467d',
-                'key': '',
-                'instance': 'template',
-                'editable': True,
-                'template_id': '',
-                'step_id': '',
-                'fieldgroup_id': '',
-                'label': u'Field 2',
-                'type': u'inputbox',
-                'preview': False,
-                'description': 'description',
-                'hint': u'field hint',
-                'multi_entry': False,
-                'multi_entry_hint': '',
-                'stats_enabled': False,
-                'required': False,
-                'children': [],
-                'attrs': {},
-                'options': [],
-                'y': 3,
-                'x': 0,
-                'width': 0
-            },
-            {
-                'id': u'6a6e9282-15e8-47cd-9cc6-35fd40a4a58f',
-                'key': '',
-                'instance': 'template',
-                'editable': True,
-                'step_id': '',
-                'template_id': '',
-                'fieldgroup_id': '',
-                'label': u'Generalities',
-                'type': u'fieldgroup',
-                'preview': False,
-                'description': u'field description',
-                'hint': u'field hint',
-                'multi_entry': False,
-                'multi_entry_hint': '',
-                'stats_enabled': False,
-                'required': False,
-                'children': [],
-                'attrs': {},
-                'options': [],
-                'y': 4,
-                'x': 0,
-                'width': 0
-            },
-            {
-                'id': u'7459abe3-52c9-4a7a-8d48-cabe3ffd2abd',
-                'key': '',
-                'instance': 'template',
-                'editable': True,
-                'template_id': '',
-                'step_id': '',
-                'fieldgroup_id': '',
-                'label': u'Name',
-                'type': u'inputbox',
-                'preview': False,
-                'description': u'field description',
-                'hint': u'field hint',
-                'multi_entry': False,
-                'multi_entry_hint': '',
-                'stats_enabled': False,
-                'required': False,
-                'children': [],
-                'attrs': {},
-                'options': [],
-                'y': 0,
-                'x': 0,
-                'width': 0
-            },
-            {
-                'id': u'de1f0cf8-63a7-4ed8-bc5d-7cf0e5a2aec2',
-                'key': '',
-                'instance': 'template',
-                'editable': True,
-                'template_id': '',
-                'step_id': '',
-                'fieldgroup_id': '',
-                'label': u'Surname',
-                'type': u'inputbox',
-                'preview': False,
-                'description': u'field description',
-                'hint': u'field hint',
-                'multi_entry': False,
-                'multi_entry_hint': '',
-                'stats_enabled': False,
-                'required': False,
-                'children': [],
-                'attrs': {},
-                'options': [],
-                'y': 0,
-                'x': 0,
-                'width': 0
-            },
-            {
-                'id': u'7e1f0cf8-63a7-4ed8-bc5d-7cf0e5a2aec2',
-                'key': '',
-                'instance': 'template',
-                'editable': True,
-                'template_id': '',
-                'step_id': '',
-                'fieldgroup_id': '',
-                'label': u'Gender',
-                'type': u'selectbox',
-                'preview': False,
-                'description': u'field description',
-                'hint': u'field hint',
-                'multi_entry': False,
-                'multi_entry_hint': '',
-                'stats_enabled': False,
-                'required': False,
-                'children': [],
-                'attrs': {},
-                'options': [
-                    {
-                        'id': '2ebf6df8-289a-4f17-aa59-329fe11d232e',
-                        'label': 'Male',
-                        'value': '',
-                        'presentation_order': 0,
-                        'score_points': 0,
-                        'activated_fields': [],
-                        'activated_steps': []
-                    },
-                    {
-                        'id': '9c7f343b-ed46-4c9e-9121-a54b6e310123',
-                        'label': 'Female',
-                        'value': '',
-                        'presentation_order': 0,
-                        'score_points': 0,
-                        'activated_fields': [],
-                        'activated_steps': []
-                    }
-                ],
-                'y': 0,
-                'x': 0,
-                'width': 0
-            }]
+        self.dummyFieldTemplates = load_json_file(WHISTLEBLOWER_IDENTITY_FIELD_PATH)['children']
+        for f in self.dummyFieldTemplates:
+            f['fieldgroup_id'] = ''
 
         self.dummyFields = copy.deepcopy(self.dummyFieldTemplates)
 
@@ -941,7 +762,6 @@ class MockDict():
             'description': u'Already localized desc',
             'recipients_clarification': u'',
             'presentation_order': 0,
-            'custodians': [],
             'receivers': [],
             'steps': [],
             'select_all_receivers': True,
@@ -949,7 +769,8 @@ class MockDict():
             'maximum_selectable_receivers': 0,
             'show_small_cards': False,
             'show_context': True,
-            'show_receivers': False,
+            'show_recipients_details': True,
+            'allow_recipients_selection': False,
             'enable_comments': True,
             'enable_messages': True,
             'enable_two_way_comments': True,
@@ -1013,6 +834,7 @@ class MockDict():
             'simplified_login': False,
             'enable_captcha': False,
             'enable_proof_of_work': False,
+            'enable_experimental_features': False,
             'enable_custom_privacy_badge': False,
             'custom_privacy_badge_tor': u'',
             'custom_privacy_badge_none': u'',
@@ -1035,19 +857,3 @@ class MockDict():
             'threshold_free_disk_percentage_medium': 5,
             'threshold_free_disk_percentage_low': 10
         }
-
-
-@transact
-def do_appdata_init(store):
-    try:
-        appdata = store.find(models.ApplicationData).one()
-
-        if not appdata:
-            raise Exception
-
-    except Exception:
-        appdata = models.ApplicationData()
-        source = load_appdata()
-        appdata.version = source['version']
-        appdata.fields = source['fields']
-        store.add(appdata)

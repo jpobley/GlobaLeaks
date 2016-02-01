@@ -1,7 +1,6 @@
 GLClient.controller('SubmissionCtrl',
-    ['$scope', '$rootScope', '$filter', '$location', '$timeout', '$uibModal', '$anchorScroll', 'Authentication', 'Submission',
-      function ($scope, $rootScope, $filter, $location, $timeout, $uibModal, $anchorScroll, Authentication, Submission) {
-
+    ['$scope', '$rootScope', '$filter', '$location', '$timeout', '$uibModal', '$anchorScroll', 'Submission',
+      function ($scope, $rootScope, $filter, $location, $timeout, $uibModal, $anchorScroll, Submission) {
   $scope.invalidForm = true;
 
   $scope.uploads = {};
@@ -140,7 +139,7 @@ GLClient.controller('SubmissionCtrl',
       return false;
     }
 
-    return ($scope.selection > 0 && $scope.selected_context.show_receivers) || $scope.selection > 1 ;
+    return ($scope.selection > 0 && $scope.selected_context.allow_recipients_selection) || $scope.selection > 1 ;
   };
 
   $scope.incrementStep = function() {
@@ -227,7 +226,7 @@ GLClient.controller('SubmissionCtrl',
         $scope.receiversOrderPredicate = 'presentation_order';
       }
 
-      if ((!$scope.receivers_selectable || !$scope.submission.context.show_receivers)) {
+      if ((!$scope.receivers_selectable || !$scope.submission.context.allow_recipients_selection)) {
         $scope.skip_first_step = true;
         $scope.selection = 1;
       } else {
@@ -267,27 +266,17 @@ GLClient.controller('SubmissionCtrl',
 
   });
 }]).
-controller('SubmissionStepCtrl', ['$scope', '$filter', function($scope, $filter) {
-  $scope.minY = function(arr) {
-    return $filter('min')($filter('map')(arr, 'y'));
-  };
-
-  $scope.splitRows = function(fields) {
-    var rows = $filter('groupBy')(fields, 'y');
-    rows = $filter('toArray')(rows);
-    rows = $filter('orderBy')(rows, $scope.minY);
-    return rows;
-  };
-
+controller('SubmissionStepCtrl', ['$scope', '$filter', 'fieldsUtilities',
+  function($scope, $filter, fieldsUtilities) {
   $scope.fields = $scope.step.children;
 
-  $scope.rows = $scope.splitRows($scope.fields);
+  $scope.rows = fieldsUtilities.splitRows($scope.fields);
 
   $scope.status = {
     opened: false
   };
 }]).
-controller('SubmissionFieldCtrl', ['$scope', function ($scope) {
+controller('SubmissionFieldCtrl', ['$scope', 'fieldsUtilities', function ($scope, fieldsUtilities) {
   $scope.getClass = function(field, row_length) {
     if (field.width !== 0) {
       return "col-md-" + field.width;
@@ -309,7 +298,7 @@ controller('SubmissionFieldCtrl', ['$scope', function ($scope) {
   };
 
   $scope.fields = $scope.field.children;
-  $scope.rows = $scope.splitRows($scope.fields);
+  $scope.rows = fieldsUtilities.splitRows($scope.fields);
   $scope.entries = $scope.getAnswersEntries($scope.entry);
 
   $scope.status = {

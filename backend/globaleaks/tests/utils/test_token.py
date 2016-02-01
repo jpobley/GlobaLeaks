@@ -69,15 +69,15 @@ class TestToken(helpers.TestGL):
                 self.assertTrue(os.path.exists(f['encrypted_path']))
                 file_list.append(f['encrypted_path'])
 
-            token.expire()
+        TokenList.reactor.pump([1] * TokenList.get_timeout())
 
-            self.assertRaises(
-                errors.TokenFailure,
-                TokenList.get, t.id
-            )
+        for t in token_collection:
+            self.assertRaises(errors.TokenFailure, TokenList.get, t.id)
 
             for f in file_list:
                 self.assertFalse(os.path.exists(f))
+
+
 
     def test_token_update_right_answer(self):
         token = Token('submission')
@@ -164,6 +164,3 @@ class TestToken(helpers.TestGL):
 
         # validate with right value: OK
         self.assertTrue(token.update({'proof_of_work_answer': 0}))
-
-        # verify that the challenge is changed
-        self.assertNotEqual(token.human_captcha['question'], 'XXX')
